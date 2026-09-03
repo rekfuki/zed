@@ -255,6 +255,10 @@ pub struct Project {
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
     last_worktree_paths: WorktreePaths,
+    /// Port of this project's Claude Code IDE WebSocket server, if running.
+    /// Set by `claude_code_ide` after it binds; read when building terminals so
+    /// the Claude CLI auto-connects via `CLAUDE_CODE_SSE_PORT`.
+    claude_code_ide_port: Option<u16>,
 }
 
 struct DownloadingFile {
@@ -1216,6 +1220,17 @@ impl Project {
         context_server_store::init(cx);
     }
 
+    /// The port of this project's running Claude Code IDE WebSocket server.
+    pub fn claude_code_ide_port(&self) -> Option<u16> {
+        self.claude_code_ide_port
+    }
+
+    /// Records the port of this project's Claude Code IDE WebSocket server so
+    /// terminals can advertise it to the Claude CLI.
+    pub fn set_claude_code_ide_port(&mut self, port: Option<u16>) {
+        self.claude_code_ide_port = port;
+    }
+
     pub fn local(
         client: Arc<Client>,
         node: NodeRuntime,
@@ -1418,6 +1433,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                claude_code_ide_port: None,
             }
         })
     }
@@ -1661,6 +1677,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                claude_code_ide_port: None,
             };
 
             // remote server -> local machine handlers
@@ -1952,6 +1969,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                claude_code_ide_port: None,
             };
             project.set_role(role, cx);
             for worktree in worktrees {
