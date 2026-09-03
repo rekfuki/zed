@@ -1465,6 +1465,72 @@ pub struct WhichKeySettingsContent {
     ///
     /// Default: 1000
     pub delay_ms: Option<u64>,
+    /// Where the which-key popup is anchored within the window.
+    ///
+    /// Default: bottom_right
+    pub position: Option<WhichKeyPosition>,
+    /// How the which-key popup arranges its bindings.
+    ///
+    /// Default: list
+    pub layout: Option<WhichKeyLayout>,
+    /// Whether pending key sequences wait indefinitely for the next keystroke.
+    ///
+    /// By default Zed flushes a pending sequence after a second, which also closes the popup.
+    /// With this enabled the popup stays open until the next keystroke or a focus change. This
+    /// also applies while typing text, so a prefix such as `j` in a `j k` binding is only inserted
+    /// once the next key arrives.
+    ///
+    /// Default: false
+    pub persistent: Option<bool>,
+}
+
+/// Where the which-key popup is anchored within the window.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WhichKeyPosition {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+/// How the which-key popup arranges its bindings.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WhichKeyLayout {
+    /// A single column that scrolls when it overflows.
+    List,
+    /// As many columns as fit the window width, filled top to bottom.
+    Columns,
 }
 
 // An ExtendingVec in the settings can only accumulate new values.

@@ -6044,6 +6044,19 @@ impl Window {
         changed
     }
 
+    /// Stops the timer that would flush the pending multi-stroke input, so the pending keystrokes
+    /// wait for the next keystroke or a focus change instead of timing out.
+    pub fn cancel_pending_input_timeout(&mut self, cx: &mut App) {
+        let cancelled = self
+            .pending_input
+            .as_mut()
+            .filter(|pending_input| pending_input.focus == self.focus)
+            .is_some_and(|pending_input| pending_input.timeout.take().is_some());
+        if cancelled {
+            self.defer_pending_input_changed(cx);
+        }
+    }
+
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
     pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
         self.pending_input()

@@ -2,10 +2,10 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
-    KeybindingKeystroke, ScrollHandle, Subscription, WeakEntity, Window,
+    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
+    KeybindingKeystroke, Pixels, ScrollHandle, Subscription, TextRun, WeakEntity, Window,
 };
-use settings::Settings;
+use settings::{Settings, WhichKeyLayout, WhichKeyPosition};
 use std::collections::HashMap;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -14,7 +14,7 @@ use ui::{
 };
 use workspace::{ModalView, Workspace};
 
-use crate::{bindings_for_which_key, map_pending_keystrokes};
+use crate::{bindings_for_which_key, map_pending_keystrokes, which_key_settings::WhichKeySettings};
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
@@ -117,10 +117,11 @@ impl WhichKeyModal {
 
 impl Render for WhichKeyModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = *WhichKeySettings::get_global(cx);
         let has_rows = !self.bindings.is_empty();
         let viewport_size = window.viewport_size();
-
-        let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
+        let window_margin = px(16.);
+        let panel_padding = px(12.);
         let max_content_height = px(f32::from(viewport_size.height) * 0.4);
 
         // Push above status bar when visible
@@ -140,9 +141,6 @@ impl Render for WhichKeyModal {
                 })
             })
             .unwrap_or(px(0.));
-
-        let margin_bottom = px(16.);
-        let bottom_offset = margin_bottom + status_height;
 
         // Title section
         let title_section = {
@@ -168,63 +166,61 @@ impl Render for WhichKeyModal {
             column
         };
 
-        let content = h_flex()
-            .items_start()
+        let (rows, max_panel_width) =
+            match settings.layout {
+                WhichKeyLayout::List => (
+                    render_column(&self.bindings, None).into_any_element(),
+                    px((f32::from(viewport_size.width) * 0.5).min(480.0)),
+                ),
+                WhichKeyLayout::Columns => {
+                    let max_panel_width = viewport_size.width - window_margin * 2.0;
+                    let available_width = max_panel_width - panel_padding * 2.0;
+                    let column_gap = px(16.);
+                    let key_action_gap = px(8.);
+                    let key_width =
+                        max_text_width(self.bindings.iter().map(|(keys, _)| keys), window, cx);
+                    let action_width = px(f32::from(max_text_width(
+                        self.bindings.iter().map(|(_, action)| action),
+                        window,
+                        cx,
+                    ))
+                    .min(320.0));
+                    let column_width = key_width + key_action_gap + action_width;
+                    let columns = column_count(
+                        self.bindings.len(),
+                        f32::from(available_width),
+                        f32::from(column_width),
+                        f32::from(column_gap),
+                    );
+                    let rows_per_column = rows_per_column(self.bindings.len(), columns);
+                    (
+                        h_flex()
+                            .items_start()
+                            .gap(column_gap)
+                            .children(self.bindings.chunks(rows_per_column).map(|column| {
+                                render_column(column, Some((key_width, action_width)))
+                            }))
+                            .into_any_element(),
+                        max_panel_width,
+                    )
+                }
+            };
+
+        let content = div()
             .id("which-key-content")
-            .gap(px(8.))
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
             .h_full()
             .max_h(max_content_height)
-            .child(
-                // Keystrokes column
-                v_flex()
-                    .gap(px(4.))
-                    .flex_shrink_0()
-                    .children(self.bindings.iter().map(|(keystrokes, _)| {
-                        div()
-                            .child(
-                                Label::new(keystrokes.clone())
-                                    .size(LabelSize::Default)
-                                    .color(Color::Accent),
-                            )
-                            .text_align(gpui::TextAlign::Right)
-                    })),
-            )
-            .child(
-                // Actions column
-                v_flex()
-                    .gap(px(4.))
-                    .flex_1()
-                    .min_w_0()
-                    .children(self.bindings.iter().map(|(_, action_name)| {
-                        let is_group = action_name.starts_with('+');
-                        let label_color = if is_group {
-                            Color::Success
-                        } else {
-                            Color::Default
-                        };
+            .child(rows);
 
-                        div().child(
-                            Label::new(action_name.clone())
-                                .size(LabelSize::Default)
-                                .color(label_color)
-                                .single_line()
-                                .truncate(),
-                        )
-                    })),
-            );
-
-        div()
+        let panel = div()
             .id("which-key-buffer-panel-scroll")
             .occlude()
-            .absolute()
-            .bottom(bottom_offset)
-            .right(px(16.))
             .min_w(px(220.))
             .max_w(max_panel_width)
             .elevation_3(cx)
-            .px(px(12.))
+            .px(panel_padding)
             .child(v_flex().child(title_section).when(has_rows, |el| {
                 el.child(
                     div()
@@ -232,7 +228,33 @@ impl Render for WhichKeyModal {
                         .child(content)
                         .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                 )
-            }))
+            }));
+
+        let (horizontal, vertical) = anchors(settings.position);
+        let bottom_padding = match vertical {
+            VerticalAnchor::Bottom => window_margin + status_height,
+            VerticalAnchor::Top | VerticalAnchor::Center => window_margin,
+        };
+
+        // The wrapper has no hitbox, so mouse input outside the panel still reaches the editor.
+        h_flex()
+            .absolute()
+            .inset_0()
+            .size_full()
+            .px(window_margin)
+            .pt(window_margin)
+            .pb(bottom_padding)
+            .map(|wrapper| match horizontal {
+                HorizontalAnchor::Left => wrapper.justify_start(),
+                HorizontalAnchor::Center => wrapper.justify_center(),
+                HorizontalAnchor::Right => wrapper.justify_end(),
+            })
+            .map(|wrapper| match vertical {
+                VerticalAnchor::Top => wrapper.items_start(),
+                VerticalAnchor::Center => wrapper.items_center(),
+                VerticalAnchor::Bottom => wrapper.items_end(),
+            })
+            .child(panel)
     }
 }
 
@@ -248,6 +270,133 @@ impl ModalView for WhichKeyModal {
     fn render_bare(&self) -> bool {
         true
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HorizontalAnchor {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerticalAnchor {
+    Top,
+    Center,
+    Bottom,
+}
+
+fn anchors(position: WhichKeyPosition) -> (HorizontalAnchor, VerticalAnchor) {
+    match position {
+        WhichKeyPosition::TopLeft => (HorizontalAnchor::Left, VerticalAnchor::Top),
+        WhichKeyPosition::TopCenter => (HorizontalAnchor::Center, VerticalAnchor::Top),
+        WhichKeyPosition::TopRight => (HorizontalAnchor::Right, VerticalAnchor::Top),
+        WhichKeyPosition::CenterLeft => (HorizontalAnchor::Left, VerticalAnchor::Center),
+        WhichKeyPosition::Center => (HorizontalAnchor::Center, VerticalAnchor::Center),
+        WhichKeyPosition::CenterRight => (HorizontalAnchor::Right, VerticalAnchor::Center),
+        WhichKeyPosition::BottomLeft => (HorizontalAnchor::Left, VerticalAnchor::Bottom),
+        WhichKeyPosition::BottomCenter => (HorizontalAnchor::Center, VerticalAnchor::Bottom),
+        WhichKeyPosition::BottomRight => (HorizontalAnchor::Right, VerticalAnchor::Bottom),
+    }
+}
+
+/// Renders one keystroke/action column. Fixed widths keep every column of the grid aligned;
+/// without them the actions column stretches to fill the panel and truncates when it overflows.
+fn render_column(
+    bindings: &[(SharedString, SharedString)],
+    fixed_widths: Option<(Pixels, Pixels)>,
+) -> impl IntoElement {
+    h_flex()
+        .items_start()
+        .gap(px(8.))
+        .child(
+            v_flex()
+                .gap(px(4.))
+                .flex_shrink_0()
+                .when_some(fixed_widths, |column, (key_width, _)| column.w(key_width))
+                .children(bindings.iter().map(|(keystrokes, _)| {
+                    div()
+                        .child(
+                            Label::new(keystrokes.clone())
+                                .size(LabelSize::Default)
+                                .color(Color::Accent),
+                        )
+                        .text_align(gpui::TextAlign::Right)
+                })),
+        )
+        .child(
+            v_flex()
+                .gap(px(4.))
+                .map(|column| match fixed_widths {
+                    Some((_, action_width)) => column.w(action_width).flex_none(),
+                    None => column.flex_1().min_w_0(),
+                })
+                .children(bindings.iter().map(|(_, action_name)| {
+                    let is_group = action_name.starts_with('+');
+                    let label_color = if is_group {
+                        Color::Success
+                    } else {
+                        Color::Default
+                    };
+
+                    div().child(
+                        Label::new(action_name.clone())
+                            .size(LabelSize::Default)
+                            .color(label_color)
+                            .single_line()
+                            .truncate(),
+                    )
+                })),
+        )
+}
+
+fn max_text_width<'a>(
+    texts: impl Iterator<Item = &'a SharedString>,
+    window: &Window,
+    cx: &App,
+) -> Pixels {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let font_size = theme_settings.ui_font_size(cx);
+    let text_system = window.text_system();
+    texts
+        .map(|text| {
+            let run = TextRun {
+                len: text.len(),
+                font: theme_settings.ui_font.clone(),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            text_system.layout_line(text, font_size, &[run], None).width
+        })
+        .fold(
+            px(0.),
+            |widest, width| if width > widest { width } else { widest },
+        )
+}
+
+fn column_count(
+    binding_count: usize,
+    available_width: f32,
+    column_width: f32,
+    column_gap: f32,
+) -> usize {
+    if binding_count == 0 || column_width <= 0. {
+        return 1;
+    }
+    // Gaps sit between columns only, so the last column gets the gap's width back.
+    let fitting = ((available_width + column_gap) / (column_width + column_gap)).floor();
+    let fitting = if fitting.is_finite() && fitting >= 1. {
+        fitting as usize
+    } else {
+        1
+    };
+    fitting.min(binding_count)
+}
+
+fn rows_per_column(binding_count: usize, column_count: usize) -> usize {
+    binding_count.div_ceil(column_count.max(1)).max(1)
 }
 
 fn group_bindings(
@@ -396,6 +545,42 @@ mod tests {
         assert_eq!(
             modal.read_with(cx, |modal, _| modal.bindings.clone()),
             expected_bindings
+        );
+    }
+
+    #[test]
+    fn test_column_count_fits_available_width() {
+        assert_eq!(column_count(40, 1000., 200., 16.), 4);
+        assert_eq!(column_count(2, 1000., 200., 16.), 2);
+        assert_eq!(column_count(40, 100., 200., 16.), 1);
+        assert_eq!(column_count(0, 1000., 200., 16.), 1);
+        assert_eq!(column_count(40, 1000., 0., 16.), 1);
+    }
+
+    #[test]
+    fn test_rows_per_column_fills_top_to_bottom() {
+        assert_eq!(rows_per_column(10, 4), 3);
+        assert_eq!(rows_per_column(8, 4), 2);
+        assert_eq!(rows_per_column(0, 4), 1);
+
+        let bindings: Vec<usize> = (0..10).collect();
+        let columns: Vec<&[usize]> = bindings.chunks(rows_per_column(10, 4)).collect();
+        assert_eq!(columns, vec![&[0, 1, 2][..], &[3, 4, 5], &[6, 7, 8], &[9]]);
+    }
+
+    #[test]
+    fn test_anchors_map_every_position() {
+        assert_eq!(
+            anchors(WhichKeyPosition::Center),
+            (HorizontalAnchor::Center, VerticalAnchor::Center)
+        );
+        assert_eq!(
+            anchors(WhichKeyPosition::TopCenter),
+            (HorizontalAnchor::Center, VerticalAnchor::Top)
+        );
+        assert_eq!(
+            anchors(WhichKeyPosition::BottomRight),
+            (HorizontalAnchor::Right, VerticalAnchor::Bottom)
         );
     }
 }

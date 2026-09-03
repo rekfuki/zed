@@ -93,9 +93,15 @@ pub fn init(cx: &mut App) {
                 return;
             }
 
-            let which_key_settings = WhichKeySettings::get_global(cx);
+            let which_key_settings = *WhichKeySettings::get_global(cx);
             if !which_key_settings.enabled {
                 return;
+            }
+
+            // GPUI arms its flush timer before observers run, so it has to be cancelled here
+            // rather than when the popup appears, otherwise a long delay would lose the race.
+            if which_key_settings.persistent {
+                window.cancel_pending_input_timeout(cx);
             }
 
             let delay_ms = which_key_settings.delay_ms;

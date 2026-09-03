@@ -5361,7 +5361,10 @@ Available variables:
 {
   "which_key": {
     "enabled": false,
-    "delay_ms": 1000
+    "delay_ms": 1000,
+    "position": "bottom_right",
+    "layout": "list",
+    "persistent": false
   }
 }
 ```
@@ -5370,6 +5373,9 @@ Available variables:
 
 - `enabled`: Whether to show the which-key menu. When enabled, the pending keystrokes indicator remains visible, but its binding preview popover is disabled.
 - `delay_ms`: How long Zed waits before showing the menu, in milliseconds.
+- `position`: Where the menu is anchored within the window. One of `top_left`, `top_center`, `top_right`, `center_left`, `center`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`.
+- `layout`: `list` shows a single column that scrolls when it overflows. `columns` splits the bindings into as many columns as fit the window width, filled top to bottom.
+- `persistent`: Zed normally flushes a pending key sequence after a second, which also closes the menu. Set this to `true` to keep the sequence pending until the next keystroke or a focus change. This applies while typing text too, so a prefix such as `j` in a `j k` binding is only inserted once the next key arrives.
 
 ## When Closing With No Tabs
 

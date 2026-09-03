@@ -1794,7 +1794,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn which_key_section() -> [SettingsPageItem; 3] {
+    fn which_key_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Which-key Menu"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1830,6 +1830,66 @@ fn editor_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.which_key.get_or_insert_default().delay_ms = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Menu Position",
+                description: "Where the which-key menu is anchored within the window.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("which_key.position"),
+                    pick: |settings_content| {
+                        settings_content
+                            .which_key
+                            .as_ref()
+                            .and_then(|settings| settings.position.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.which_key.get_or_insert_default().position = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Menu Layout",
+                description: "Show bindings as a single scrolling list or split them into columns across the window.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("which_key.layout"),
+                    pick: |settings_content| {
+                        settings_content
+                            .which_key
+                            .as_ref()
+                            .and_then(|settings| settings.layout.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.which_key.get_or_insert_default().layout = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Persistent Menu",
+                description: "Keep pending key sequences waiting for the next keystroke instead of flushing them after a second, so the menu stays open.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("which_key.persistent"),
+                    pick: |settings_content| {
+                        settings_content
+                            .which_key
+                            .as_ref()
+                            .and_then(|settings| settings.persistent.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .which_key
+                            .get_or_insert_default()
+                            .persistent = value;
                     },
                 }),
                 metadata: None,
