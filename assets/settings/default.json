@@ -2789,6 +2789,16 @@
     "enabled": false,
     // Delay in milliseconds before showing the which-key popup.
     "delay_ms": 1000,
+    // Where the popup is anchored within the window. One of:
+    // "top_left", "top_center", "top_right", "center_left", "center",
+    // "center_right", "bottom_left", "bottom_center", "bottom_right".
+    "position": "bottom_right",
+    // How bindings are arranged. "list" is a single scrolling column,
+    // "columns" fills as many columns as fit the window width.
+    "layout": "list",
+    // Whether pending key sequences wait indefinitely for the next keystroke
+    // instead of being flushed after a second, keeping the popup open.
+    "persistent": false,
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
