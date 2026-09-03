@@ -587,7 +587,7 @@ impl Project {
         remote_client: Option<Entity<RemoteClient>>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        if let Some(path) = &path {
+        let environment = if let Some(path) = &path {
             let shell = Shell::Program(shell.to_string());
             self.environment
                 .update(cx, |project_env, cx| match &remote_client {
@@ -601,6 +601,26 @@ impl Project {
                 })
         } else {
             Task::ready(None).shared()
+        };
+        // Local terminals only: the Claude Code IDE server binds this machine's
+        // loopback, so 127.0.0.1:<port> evaluated inside an SSH session names
+        // the *remote* host, where nothing is listening -- the CLI would try to
+        // connect and fail rather than simply run without the integration.
+        // `insert`, because the captured environment may already carry a
+        // CLAUDE_CODE_SSE_PORT inherited from the shell Zed was started in (a
+        // Claude terminal in another window, say), and that port belongs to a
+        // different window. Every caller applies the user's `terminal.env`
+        // settings on top afterwards, so a deliberate override still wins.
+        match self.claude_code_ide_port {
+            Some(port) if remote_client.is_none() => cx
+                .spawn(async move |_| {
+                    let mut env = environment.await.unwrap_or_default();
+                    env.insert("CLAUDE_CODE_SSE_PORT".to_owned(), port.to_string());
+                    env.insert("ENABLE_IDE_INTEGRATION".to_owned(), "true".to_owned());
+                    Some(env)
+                })
+                .shared(),
+            _ => environment,
         }
     }
 }
