@@ -3,6 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use gpui::{
     App, AvailableSpace, KeybindingKeystroke, Pixels, RenderOnce, ScrollHandle, Window, size,
 };
+use settings::WhichKeyLayout;
 use ui::{
     Divider, DividerColor, KeyBinding, LabelSize, WithScrollbar, prelude::*,
     text_for_keybinding_keystrokes,
@@ -90,6 +91,7 @@ pub(crate) struct PendingBindings {
     bindings: Rc<[PendingBindingRow]>,
     scroll_handle: ScrollHandle,
     max_content_height: Pixels,
+    layout: WhichKeyLayout,
 }
 
 impl PendingBindings {
@@ -99,6 +101,7 @@ impl PendingBindings {
         bindings: Rc<[PendingBindingRow]>,
         scroll_handle: ScrollHandle,
         max_content_height: Pixels,
+        layout: WhichKeyLayout,
     ) -> Self {
         Self {
             id,
@@ -106,6 +109,7 @@ impl PendingBindings {
             bindings,
             scroll_handle,
             max_content_height,
+            layout,
         }
     }
 
@@ -136,43 +140,47 @@ impl RenderOnce for PendingBindings {
                     .width
             })
             .fold(px(0.), Pixels::max);
-        let content = h_flex()
-            .items_start()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .child(
-                v_flex()
-                    .w(key_column_width)
-                    .gap_1()
-                    .items_end()
-                    .flex_shrink_0()
-                    .children(self.bindings.iter().map(|binding| {
-                        h_flex()
-                            .h_6()
-                            .flex_none()
-                            .child(Self::keybinding(binding.keystrokes.clone(), cx))
-                    })),
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .flex_1()
-                    .min_w_0()
-                    .children(self.bindings.iter().map(|binding| {
-                        h_flex().h_6().flex_none().w_full().min_w_0().child(
-                            Label::new(binding.action_name.clone())
-                                .size(LabelSize::Small)
-                                .color(if binding.is_group {
-                                    Color::Success
-                                } else {
-                                    Color::Default
-                                })
-                                .single_line()
-                                .truncate(),
-                        )
-                    })),
-            );
+        let rows = match self.layout {
+            WhichKeyLayout::List => {
+                render_column(&self.bindings, key_column_width, None, cx).into_any_element()
+            }
+            WhichKeyLayout::Columns => {
+                let action_column_width = self
+                    .bindings
+                    .iter()
+                    .map(|binding| {
+                        Label::new(binding.action_name.clone())
+                            .size(LabelSize::Small)
+                            .into_any_element()
+                            .layout_as_root(
+                                size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                                window,
+                                cx,
+                            )
+                            .width
+                    })
+                    .fold(px(0.), Pixels::max)
+                    .min(px(320.));
+                let column_gap = px(16.);
+                let column_width = key_column_width + px(8.) + action_column_width;
+                let available_width = window.viewport_size().width - px(48.);
+                let column_count = column_count(
+                    self.bindings.len(),
+                    f32::from(available_width),
+                    f32::from(column_width),
+                    f32::from(column_gap),
+                );
+                let rows_per_column = rows_per_column(self.bindings.len(), column_count);
+                h_flex()
+                    .items_start()
+                    .gap_4()
+                    .children(self.bindings.chunks(rows_per_column).map(|bindings| {
+                        render_column(bindings, key_column_width, Some(action_column_width), cx)
+                    }))
+                    .into_any_element()
+            }
+        };
+        let content = div().px_2().py_1().child(rows);
 
         v_flex()
             // Title section
@@ -215,6 +223,73 @@ impl RenderOnce for PendingBindings {
                 )
             })
     }
+}
+
+fn render_column(
+    bindings: &[PendingBindingRow],
+    key_column_width: Pixels,
+    action_column_width: Option<Pixels>,
+    cx: &App,
+) -> impl IntoElement {
+    h_flex()
+        .items_start()
+        .gap_2()
+        .child(
+            v_flex()
+                .w(key_column_width)
+                .gap_1()
+                .items_end()
+                .flex_shrink_0()
+                .children(bindings.iter().map(|binding| {
+                    h_flex()
+                        .h_6()
+                        .flex_none()
+                        .child(PendingBindings::keybinding(binding.keystrokes.clone(), cx))
+                })),
+        )
+        .child(
+            v_flex()
+                .gap_1()
+                .map(|column| match action_column_width {
+                    Some(action_column_width) => column.w(action_column_width).flex_none(),
+                    None => column.flex_1().min_w_0(),
+                })
+                .children(bindings.iter().map(|binding| {
+                    h_flex().h_6().flex_none().w_full().min_w_0().child(
+                        Label::new(binding.action_name.clone())
+                            .size(LabelSize::Small)
+                            .color(if binding.is_group {
+                                Color::Success
+                            } else {
+                                Color::Default
+                            })
+                            .single_line()
+                            .truncate(),
+                    )
+                })),
+        )
+}
+
+fn column_count(
+    binding_count: usize,
+    available_width: f32,
+    column_width: f32,
+    column_gap: f32,
+) -> usize {
+    if binding_count == 0 || column_width <= 0. {
+        return 1;
+    }
+    let fitting = ((available_width + column_gap) / (column_width + column_gap)).floor();
+    let fitting = if fitting.is_finite() && fitting >= 1. {
+        fitting as usize
+    } else {
+        1
+    };
+    fitting.min(binding_count)
+}
+
+fn rows_per_column(binding_count: usize, column_count: usize) -> usize {
+    binding_count.div_ceil(column_count.max(1)).max(1)
 }
 
 #[cfg(test)]
@@ -347,6 +422,26 @@ mod tests {
             assert_eq!(group.action_name.as_ref(), expected_label);
             assert!(group.is_group);
         }
+    }
+
+    #[test]
+    fn test_column_count_fits_available_width() {
+        assert_eq!(column_count(40, 1000., 200., 16.), 4);
+        assert_eq!(column_count(2, 1000., 200., 16.), 2);
+        assert_eq!(column_count(40, 100., 200., 16.), 1);
+        assert_eq!(column_count(0, 1000., 200., 16.), 1);
+        assert_eq!(column_count(40, 1000., 0., 16.), 1);
+    }
+
+    #[test]
+    fn test_rows_per_column_fills_top_to_bottom() {
+        assert_eq!(rows_per_column(10, 4), 3);
+        assert_eq!(rows_per_column(8, 4), 2);
+        assert_eq!(rows_per_column(0, 4), 1);
+
+        let bindings: Vec<usize> = (0..10).collect();
+        let columns: Vec<&[usize]> = bindings.chunks(rows_per_column(10, 4)).collect();
+        assert_eq!(columns, vec![&[0, 1, 2][..], &[3, 4, 5], &[6, 7, 8], &[9]]);
     }
 
     #[gpui::test]

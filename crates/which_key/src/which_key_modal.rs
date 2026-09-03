@@ -4,7 +4,7 @@ use gpui::{
     App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, KeybindingKeystroke,
     ScrollHandle, Subscription, WeakEntity, Window,
 };
-use settings::Settings;
+use settings::{Settings, WhichKeyLayout, WhichKeyPosition};
 use std::rc::Rc;
 use theme_settings::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*};
@@ -13,6 +13,7 @@ use workspace::{ModalView, Workspace};
 use crate::{
     bindings_for_which_key, map_pending_keystrokes,
     pending_bindings::{PendingBindingRow, PendingBindings, prepare_pending_bindings},
+    which_key_settings::WhichKeySettings,
 };
 
 pub struct WhichKeyModal {
@@ -76,10 +77,14 @@ impl WhichKeyModal {
 
 impl Render for WhichKeyModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = *WhichKeySettings::get_global(cx);
         let viewport_size = window.viewport_size();
-
-        let max_panel_width = px((f32::from(viewport_size.width) * 0.5).min(480.0));
+        let window_margin = px(16.);
         let max_content_height = px(f32::from(viewport_size.height) * 0.4);
+        let max_panel_width = match settings.layout {
+            WhichKeyLayout::List => px((f32::from(viewport_size.width) * 0.5).min(480.0)),
+            WhichKeyLayout::Columns => viewport_size.width - window_margin * 2.0,
+        };
 
         // Push above status bar when visible
         let status_height = self
@@ -99,15 +104,9 @@ impl Render for WhichKeyModal {
             })
             .unwrap_or(px(0.));
 
-        let margin_bottom = px(16.);
-        let bottom_offset = margin_bottom + status_height;
-
-        div()
+        let panel = div()
             .id("which-key-buffer-panel-scroll")
             .occlude()
-            .absolute()
-            .bottom(bottom_offset)
-            .right(px(16.))
             .min_w(px(220.))
             .max_w(max_panel_width)
             .elevation_3(cx)
@@ -118,7 +117,34 @@ impl Render for WhichKeyModal {
                 self.bindings.clone(),
                 self.scroll_handle.clone(),
                 max_content_height,
-            ))
+                settings.layout,
+            ));
+
+        let (horizontal, vertical) = anchors(settings.position);
+        let bottom_padding = match vertical {
+            VerticalAnchor::Bottom => window_margin + status_height,
+            VerticalAnchor::Top | VerticalAnchor::Center => window_margin,
+        };
+
+        // The wrapper has no hitbox, so mouse input outside the panel still reaches the editor.
+        h_flex()
+            .absolute()
+            .inset_0()
+            .size_full()
+            .px(window_margin)
+            .pt(window_margin)
+            .pb(bottom_padding)
+            .map(|wrapper| match horizontal {
+                HorizontalAnchor::Left => wrapper.justify_start(),
+                HorizontalAnchor::Center => wrapper.justify_center(),
+                HorizontalAnchor::Right => wrapper.justify_end(),
+            })
+            .map(|wrapper| match vertical {
+                VerticalAnchor::Top => wrapper.items_start(),
+                VerticalAnchor::Center => wrapper.items_center(),
+                VerticalAnchor::Bottom => wrapper.items_end(),
+            })
+            .child(panel)
     }
 }
 
@@ -133,5 +159,54 @@ impl Focusable for WhichKeyModal {
 impl ModalView for WhichKeyModal {
     fn render_bare(&self) -> bool {
         true
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HorizontalAnchor {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerticalAnchor {
+    Top,
+    Center,
+    Bottom,
+}
+
+fn anchors(position: WhichKeyPosition) -> (HorizontalAnchor, VerticalAnchor) {
+    match position {
+        WhichKeyPosition::TopLeft => (HorizontalAnchor::Left, VerticalAnchor::Top),
+        WhichKeyPosition::TopCenter => (HorizontalAnchor::Center, VerticalAnchor::Top),
+        WhichKeyPosition::TopRight => (HorizontalAnchor::Right, VerticalAnchor::Top),
+        WhichKeyPosition::CenterLeft => (HorizontalAnchor::Left, VerticalAnchor::Center),
+        WhichKeyPosition::Center => (HorizontalAnchor::Center, VerticalAnchor::Center),
+        WhichKeyPosition::CenterRight => (HorizontalAnchor::Right, VerticalAnchor::Center),
+        WhichKeyPosition::BottomLeft => (HorizontalAnchor::Left, VerticalAnchor::Bottom),
+        WhichKeyPosition::BottomCenter => (HorizontalAnchor::Center, VerticalAnchor::Bottom),
+        WhichKeyPosition::BottomRight => (HorizontalAnchor::Right, VerticalAnchor::Bottom),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_anchors_map_every_position() {
+        assert_eq!(
+            anchors(WhichKeyPosition::Center),
+            (HorizontalAnchor::Center, VerticalAnchor::Center)
+        );
+        assert_eq!(
+            anchors(WhichKeyPosition::TopCenter),
+            (HorizontalAnchor::Center, VerticalAnchor::Top)
+        );
+        assert_eq!(
+            anchors(WhichKeyPosition::BottomRight),
+            (HorizontalAnchor::Right, VerticalAnchor::Bottom)
+        );
     }
 }

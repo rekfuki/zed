@@ -3,7 +3,7 @@ use gpui::{
     KeybindingKeystroke, KeystrokeEvent, Render, ScrollHandle, Subscription, Task, Window,
     anchored, deferred,
 };
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, WhichKeyLayout};
 use std::{rc::Rc, time::Duration};
 use ui::{
     ButtonLike, CircularProgress, KeyBinding, KeyBindingStyle, prelude::*, tooltip_container,
@@ -355,6 +355,7 @@ impl Render for PendingKeystrokesIndicator {
                                         popover_render_state.bindings.clone(),
                                         self.popover_scroll_handle.clone(),
                                         max_content_height,
+                                        WhichKeyLayout::List,
                                     ),
                                 )
                             })),
