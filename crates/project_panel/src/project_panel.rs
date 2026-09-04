@@ -19,10 +19,10 @@ use git::status::GitSummary;
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, Bounds,
-    ClipboardEntry as GpuiClipboardEntry, ClipboardItem, Context, CursorStyle, DismissEvent, Div,
-    DragMoveEvent, Entity, EventEmitter, ExternalDragPayload, ExternalPaths, FileDragPaths,
-    FileDropEvent, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    ClipboardEntry as GpuiClipboardEntry, ClipboardItem, ClipboardString, Context, CursorStyle,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalDragPayload, ExternalPaths,
+    FileDragPaths, FileDropEvent, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement,
+    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
     PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
@@ -150,6 +150,7 @@ pub struct ProjectPanel {
     context_menu: Option<DeployedContextMenu>,
     filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
+    mirrored_clipboard_paths: BTreeSet<PathBuf>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
@@ -890,6 +891,7 @@ impl ProjectPanel {
                 context_menu: None,
                 filename_editor,
                 clipboard: None,
+                mirrored_clipboard_paths: BTreeSet::new(),
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 diagnostics: Default::default(),
@@ -3595,7 +3597,9 @@ impl ProjectPanel {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(external_paths) = self.external_paths_from_system_clipboard(cx) {
+        if let Some(external_paths) = self.external_paths_from_system_clipboard(cx)
+            && !self.system_clipboard_mirrors_internal_clipboard(&external_paths)
+        {
             let target_entry_id = self
                 .selection
                 .map(|s| s.entry_id)
@@ -4390,26 +4394,57 @@ impl ProjectPanel {
         Some(worktree.absolutize(&root_entry.path))
     }
 
-    fn write_entries_to_system_clipboard(&self, entries: &BTreeSet<SelectedEntry>, cx: &mut App) {
-        let project = self.project.read(cx);
-        let paths: Vec<String> = entries
+    fn write_entries_to_system_clipboard(
+        &mut self,
+        entries: &BTreeSet<SelectedEntry>,
+        cx: &mut App,
+    ) {
+        let paths = self.abs_paths_for_entries(entries, cx);
+        if paths.is_empty() {
+            return;
+        }
+        let text = paths
             .iter()
+            .map(|path| path.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.mirrored_clipboard_paths = paths.iter().cloned().collect();
+        cx.write_to_clipboard(ClipboardItem {
+            entries: vec![
+                GpuiClipboardEntry::ExternalPaths(ExternalPaths(paths.into_iter().collect())),
+                GpuiClipboardEntry::String(ClipboardString::new(text)),
+            ],
+        });
+    }
+
+    fn abs_paths_for_entries<'a>(
+        &self,
+        entries: impl IntoIterator<Item = &'a SelectedEntry>,
+        cx: &App,
+    ) -> Vec<PathBuf> {
+        let project = self.project.read(cx);
+        entries
+            .into_iter()
             .filter_map(|entry| {
                 let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
                 let worktree = worktree.read(cx);
                 let worktree_entry = worktree.entry_for_id(entry.entry_id)?;
-                Some(
-                    worktree
-                        .abs_path()
-                        .join(worktree_entry.path.as_std_path())
-                        .to_string_lossy()
-                        .to_string(),
-                )
+                Some(worktree.absolutize(&worktree_entry.path))
             })
-            .collect();
-        if !paths.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
+            .collect()
+    }
+
+    /// Every in-panel copy or cut mirrors its paths to the system clipboard. The paths are
+    /// remembered as written rather than recomputed, because a cut-then-paste moves the entries
+    /// and their current locations would no longer match. Identical paths on both sides mean the
+    /// pending paste is our own and must keep cut/move semantics instead of being treated as
+    /// files copied from another app.
+    fn system_clipboard_mirrors_internal_clipboard(&self, external_paths: &ExternalPaths) -> bool {
+        if self.clipboard.is_none() || self.mirrored_clipboard_paths.is_empty() {
+            return false;
         }
+        let external_paths: BTreeSet<PathBuf> = external_paths.paths().iter().cloned().collect();
+        self.mirrored_clipboard_paths == external_paths
     }
 
     fn external_paths_from_system_clipboard(&self, cx: &App) -> Option<ExternalPaths> {
