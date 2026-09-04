@@ -2319,6 +2319,31 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn is_obscured_at(&self, position: Point<Pixels>) -> bool {
+        let (native_window, content_height) = {
+            let state = self.0.lock();
+            (state.native_window, state.content_size().height)
+        };
+
+        // SAFETY: Runs on the foreground thread while the window is alive. `native_window` is
+        // retained by MacWindowState, and the AppKit calls below take and return plain values.
+        unsafe {
+            let window_point = NSPoint::new(
+                position.x.as_f32() as f64,
+                (content_height - position.y).as_f32() as f64,
+            );
+            let screen_point: NSPoint =
+                msg_send![native_window, convertPointToScreen: window_point];
+            let own_window_number: NSInteger = msg_send![native_window, windowNumber];
+            let top_window_number: NSInteger = msg_send![
+                class!(NSWindow),
+                windowNumberAtPoint: screen_point
+                belowWindowWithWindowNumber: 0 as NSInteger
+            ];
+            top_window_number != 0 && top_window_number != own_window_number
+        }
+    }
+
     fn play_system_bell(&self) {
         NSBeep()
     }

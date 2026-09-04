@@ -56,6 +56,7 @@ pub(crate) struct TestWindowState {
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
+    obscured: bool,
 }
 
 #[derive(Clone)]
@@ -128,6 +129,7 @@ impl TestWindow {
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
+            obscured: false,
         })))
     }
     pub fn simulate_scheduled_frame(&self) -> bool {
@@ -272,6 +274,12 @@ impl TestWindow {
 
     pub fn set_start_external_drag_result(&self, result: bool) {
         self.0.lock().start_external_drag_result = result;
+    }
+
+    /// Pretends another window covers this one, so drags are handed to the platform without
+    /// leaving the window bounds.
+    pub fn set_obscured(&self, obscured: bool) {
+        self.0.lock().obscured = obscured;
     }
 }
 
@@ -555,6 +563,10 @@ impl PlatformWindow for TestWindow {
             }
         }
         state.start_external_drag_result
+    }
+
+    fn is_obscured_at(&self, _position: Point<Pixels>) -> bool {
+        self.0.lock().obscured
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}

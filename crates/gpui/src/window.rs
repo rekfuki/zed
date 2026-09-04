@@ -5436,10 +5436,22 @@ impl Window {
         if mouse_move.pressed_button != Some(MouseButton::Left) {
             return;
         }
-        if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
+        if !cx
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.external_payload_source.is_some())
+        {
             return;
         }
         if !self.platform_window.can_start_external_drag() {
+            return;
+        }
+        // A window from another app (or another of our own windows) stacked above this one keeps
+        // the pointer inside our bounds while the user is visibly dragging onto that window, so
+        // the bounds check alone would never hand the drag to the platform.
+        let within_viewport =
+            Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position);
+        if within_viewport && !self.platform_window.is_obscured_at(mouse_move.position) {
             return;
         }
         let Some(payload_source) = cx
@@ -8272,6 +8284,77 @@ mod tests {
             cx.test_window(failed.window).external_drag_files(),
             [(failed_path, true)]
         );
+    }
+
+    #[gpui::test]
+    fn file_drag_is_promoted_when_another_window_covers_the_pointer(cx: &mut TestAppContext) {
+        let path = PathBuf::from("/tmp/covered-drag");
+        let observed_drag_moves = Rc::new(RefCell::new(Vec::new()));
+        let observed_drops = Rc::new(RefCell::new(Vec::new()));
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let path = path.clone();
+                let observed_drag_moves = observed_drag_moves.clone();
+                let observed_drops = observed_drops.clone();
+                move |_, _| FileDragView {
+                    path,
+                    observed_drag_moves,
+                    observed_drops,
+                }
+            })
+            .into();
+        cx.test_window(window).set_start_external_drag_result(true);
+
+        let covered_position = point(px(40.), px(40.));
+        let update_result = cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: point(px(10.), px(10.)),
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(20.), px(20.)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_some());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to start drag: {update_result:?}"
+        );
+        assert!(cx.test_window(window).external_drag_files().is_empty());
+
+        cx.test_window(window).set_obscured(true);
+        let update_result = cx.update_window(window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: covered_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to promote drag: {update_result:?}"
+        );
+        assert_eq!(cx.test_window(window).external_drag_files(), [(path, true)]);
+        assert_eq!(observed_drag_moves.borrow().last(), Some(&covered_position));
     }
 
     struct FocusForwarder {

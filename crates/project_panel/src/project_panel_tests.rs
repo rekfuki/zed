@@ -2477,6 +2477,15 @@ async fn test_copy_and_cut_write_to_system_clipboard(cx: &mut gpui::TestAppConte
         text.contains("file_a.txt"),
         "System clipboard should contain the copied file path, got: {text}"
     );
+    let external_paths = clipboard
+        .entries()
+        .iter()
+        .find_map(|entry| match entry {
+            GpuiClipboardEntry::ExternalPaths(paths) => Some(paths.paths().to_vec()),
+            _ => None,
+        })
+        .expect("system clipboard should carry file paths so other apps can paste them as files");
+    assert_eq!(external_paths, [PathBuf::from(path!("/root/file_a.txt"))]);
 
     select_path(&panel, "root/file_b.txt", cx);
     panel.update_in(cx, |panel, window, cx| {
