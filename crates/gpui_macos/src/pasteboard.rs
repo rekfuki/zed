@@ -1,5 +1,6 @@
 use core::slice;
-use std::ffi::{CStr, c_void};
+use std::ffi::{CStr, c_char, c_void};
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::PathBuf;
 
 use cocoa::{
@@ -8,9 +9,9 @@ use cocoa::{
         NSPasteboardTypeTIFF,
     },
     base::{id, nil},
-    foundation::{NSArray, NSData, NSFastEnumeration, NSString},
+    foundation::{NSArray, NSData, NSFastEnumeration, NSString, NSUInteger},
 };
-use objc::{msg_send, rc::StrongPtr, runtime::Object, sel, sel_impl};
+use objc::{class, msg_send, rc::StrongPtr, runtime::Object, sel, sel_impl};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
@@ -169,7 +170,13 @@ impl Pasteboard {
                 [ClipboardEntry::Image(image)] => {
                     self.write_image(image);
                 }
-                [ClipboardEntry::ExternalPaths(_)] => {}
+                entries
+                    if entries
+                        .iter()
+                        .any(|entry| matches!(entry, ClipboardEntry::ExternalPaths(_))) =>
+                {
+                    self.write_external_paths(&item);
+                }
                 _ => {
                     // Agus NB: We're currently only writing string entries to the clipboard when we have more than one.
                     //
@@ -229,6 +236,63 @@ impl Pasteboard {
                 );
                 self.inner
                     .setData_forType(metadata_bytes, *self.metadata_type);
+            }
+        }
+    }
+
+    /// Writes the paths under the legacy `NSFilenamesPboardType` rather than as `NSURL` items:
+    /// every file-URL initializer either stats the path synchronously or needs an `isDirectory:`
+    /// hint we do not have, and AppKit translates the filenames list to `public.file-url` for
+    /// readers such as Finder. Paths go through `stringWithFileSystemRepresentation:length:` so
+    /// non-UTF-8 bytes survive. The plain-text form rides along for text-only readers.
+    unsafe fn write_external_paths(&self, item: &ClipboardItem) {
+        unsafe {
+            let mut ns_paths: Vec<id> = Vec::new();
+            let mut text = String::new();
+            for entry in &item.entries {
+                match entry {
+                    ClipboardEntry::ExternalPaths(paths) => {
+                        for path in paths.paths() {
+                            let bytes = path.as_os_str().as_bytes();
+                            let ns_path: id = msg_send![
+                                class!(NSString),
+                                stringWithFileSystemRepresentation: bytes.as_ptr() as *const c_char
+                                length: bytes.len() as NSUInteger
+                            ];
+                            if ns_path != nil {
+                                ns_paths.push(ns_path);
+                            }
+                        }
+                    }
+                    ClipboardEntry::String(string) => text.push_str(&string.text),
+                    ClipboardEntry::Image(_) => {}
+                }
+            }
+            if ns_paths.is_empty() {
+                self.inner.clearContents();
+                return;
+            }
+
+            // `declareTypes:owner:` both clears the pasteboard and registers the types;
+            // `setPropertyList:forType:` on an undeclared type is silently ignored.
+            let mut types = vec![NSFilenamesPboardType];
+            if !text.is_empty() {
+                types.push(NSPasteboardTypeString);
+            }
+            self.inner
+                .declareTypes_owner(NSArray::arrayWithObjects(nil, &types), nil);
+            self.inner.setPropertyList_forType(
+                NSArray::arrayWithObjects(nil, &ns_paths),
+                NSFilenamesPboardType,
+            );
+            if !text.is_empty() {
+                let text_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    text.as_ptr() as *const c_void,
+                    text.len() as u64,
+                );
+                self.inner
+                    .setData_forType(text_bytes, NSPasteboardTypeString);
             }
         }
     }
@@ -495,6 +559,26 @@ mod tests {
             }
             other => panic!("expected String, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_write_external_paths_round_trip() {
+        let pasteboard = Pasteboard::unique();
+        let paths = [PathBuf::from("/tmp/a.txt"), PathBuf::from("/tmp/b dir")];
+        let item = ClipboardItem {
+            entries: vec![
+                ClipboardEntry::ExternalPaths(ExternalPaths(paths.iter().cloned().collect())),
+                ClipboardEntry::String(ClipboardString::new("/tmp/a.txt\n/tmp/b dir".into())),
+            ],
+        };
+
+        pasteboard.write(item.clone());
+
+        unsafe {
+            let types: id = pasteboard.inner.types();
+            assert!(msg_send![types, containsObject: NSFilenamesPboardType]);
+        }
+        assert_eq!(pasteboard.read(), Some(item));
     }
 
     #[test]
