@@ -1,0 +1,100 @@
+name: fork_nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if patches has not changed since the last nightly
+        type: boolean
+        default: false
+
+concurrency:
+  group: fork-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    # macos-15 ships Xcode 16 with the Metal toolchain bundled. Xcode 26 on newer
+    # images requires a separate Metal toolchain download before gpui shaders compile.
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: patches
+
+      - name: Skip when patches is unchanged since the last nightly
+        id: changed
+        run: |
+          previous=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || echo none)
+          current=$(git rev-parse HEAD)
+          if [[ "$previous" == "$current" && "${{ inputs.force }}" != "true" ]]; then
+            echo "nightly already built from $current"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Hosted mac runners ship several Xcode versions. Removing the unused ones
+      # frees tens of GB that the release target directory needs.
+      - name: Free disk space
+        if: steps.changed.outputs.build == 'true'
+        run: |
+          selected=$(cd "$(xcode-select -p)/../.." && pwd -P)
+          for app in /Applications/Xcode*.app; do
+            real=$(cd "$app" && pwd -P)
+            if [[ "$real" != "$selected" ]]; then
+              sudo rm -rf "$app"
+            fi
+          done
+          df -h /
+
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.build == 'true'
+        with:
+          node-version: "24"
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.changed.outputs.build == 'true'
+        with:
+          cache-bin: true
+
+      - name: Bundle macOS app
+        if: steps.changed.outputs.build == 'true'
+        run: ./script/bundle-mac aarch64-apple-darwin
+
+      - name: Publish to the nightly release
+        if: steps.changed.outputs.build == 'true'
+        run: |
+          repo="${{ github.repository }}"
+          sha=$(git rev-parse HEAD)
+          dmg=target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+
+          gh api -X PATCH "repos/$repo/git/refs/tags/nightly" -f sha="$sha" -F force=true >/dev/null \
+            || gh api -X POST "repos/$repo/git/refs" -f ref=refs/tags/nightly -f sha="$sha" >/dev/null
+
+          notes="Unsigned Apple Silicon build of the patches branch.
+
+          Commit: $sha
+          Built: $(date -u +%Y-%m-%dT%H:%MZ)
+
+          The app is ad-hoc signed, so Gatekeeper blocks the first launch. After
+          copying it to /Applications run:
+
+              xattr -dr com.apple.quarantine \"/Applications/Zed Dev.app\""
+
+          if gh release view nightly --repo "$repo" >/dev/null 2>&1; then
+            gh release edit nightly --repo "$repo" --prerelease --notes "$notes"
+          else
+            gh release create nightly --repo "$repo" --prerelease --title "Nightly (patches)" --notes "$notes"
+          fi
+          gh release upload nightly "$dmg" --repo "$repo" --clobber

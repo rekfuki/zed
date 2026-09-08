@@ -1,0 +1,32 @@
+name: fork_sync
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fast-forward main from upstream
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/merge-upstream" -f branch=main --jq .message
+
+      - name: Merge main into patches
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/merges" \
+            -f base=patches \
+            -f head=main \
+            -f commit_message="Merge upstream main into patches" \
+            --jq '.sha // "already up to date"'
