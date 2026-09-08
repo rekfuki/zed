@@ -51,7 +51,7 @@ jobs:
         run: |
           selected=$(cd "$(xcode-select -p)/../.." && pwd -P)
           for app in /Applications/Xcode*.app; do
-            real=$(cd "$app" && pwd -P)
+            real=$(cd "$app" 2>/dev/null && pwd -P) || continue
             if [[ "$real" != "$selected" ]]; then
               sudo rm -rf "$app"
             fi
