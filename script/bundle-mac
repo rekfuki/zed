@@ -33,7 +33,6 @@ do
         o) open_result=true;;
         d)
             export CARGO_INCREMENTAL=true
-            export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
             target_dir="debug"
             ;;
@@ -93,6 +92,11 @@ cargo --config .cargo/bundle-config.toml build ${build_flag} --package zed --pac
 cargo --config .cargo/bundle-config.toml build ${build_flag} --package remote_server --target $target_triple
 
 echo "Creating application bundle"
+# The binaries are already built above with bundle-config.toml. Without this,
+# cargo bundle runs its own `cargo build` without that config, so the rustflags
+# differ, the whole workspace compiles a second time, and the resulting binary
+# overwrites the share-generics one we just built.
+export CARGO_BUNDLE_SKIP_BUILD=true
 pushd crates/zed
 cp Cargo.toml Cargo.toml.backup
 sed \
