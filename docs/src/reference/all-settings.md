@@ -552,6 +552,24 @@ When enabled, this setting will automatically close tabs for files that have bee
 }
 ```
 
+## Command Palette
+
+### Use Command History
+
+- Description: Whether to use command history ranking for sorting in the command palette.
+- Setting: `command_palette.use_command_history`
+- Default: `true`
+
+Disabling this setting does not erase history.
+
+```json [settings]
+{
+  "command_palette": {
+    "use_command_history": false
+  }
+}
+```
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
@@ -3771,6 +3789,24 @@ Examples:
 **Options**
 
 List of `string` glob patterns
+
+## Read-Only Files {#read-only-files}
+
+- Default: `[]`
+- Description: Glob patterns for files you can open and view but cannot edit, such as generated files or external dependencies.
+- Setting: `read_only_files`
+
+Add this to your project’s `.zed/settings.json`:
+
+```json [settings]
+{
+  "read_only_files": ["**/generated/**", "..."]
+}
+```
+
+Like [File Scan Exclusions](#file-scan-exclusions), `"..."` expands to the list inherited from the preceding settings layer. This example adds generated files to the read-only patterns from your user settings without repeating them. Duplicate entries collapse to their first occurrence.
+
+Omit `"..."` to replace the inherited list, or use `[]` to clear it. These patterns apply when you open a file.
 
 ## Read SSH Config
 
